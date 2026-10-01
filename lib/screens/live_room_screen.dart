@@ -42,6 +42,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   String _endText = "";
   Timer? _countdownTimer;
   Timer? _performanceTimer;
+  Timer? _chatPollTimer;
 
   @override
   void initState() {
@@ -53,6 +54,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     _loadQueue();
     _loadCurrentPerformer();
     _startQueueCheck();
+
+    // Автообновление чата каждые 3 секунды
+    _chatPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) _loadMessages();
+    });
   }
 
   void _startQueueCheck() {
@@ -80,6 +86,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   Future<void> _loadUser() async {
     final id = await UserService.getUserId();
+    print('USER_ID_CHECK: $id');
     setState(() => _userId = id);
   }
 
@@ -126,18 +133,38 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _joinQueue() async {
-    if (_userId == null) return;
+    print('JOIN_QUEUE: кнопка нажата, userId = $_userId');
+    if (_userId == null) {
+      print('JOIN_QUEUE: userId == null, выход');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Вы не зарегистрированы'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final result =
         await ApiService.joinQueue(roomId: _roomId, userId: _userId!);
+    print('JOIN_QUEUE: ответ сервера = $result');
 
     if (result == null) {
+      print('JOIN_QUEUE: result == null');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ошибка подключения к серверу')),
+          const SnackBar(
+            content: Text('Ошибка подключения к серверу'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
       return;
     }
+
+    print('JOIN_QUEUE: success = ${result['success']}');
+    print('JOIN_QUEUE: error = ${result['error']}');
+    print('JOIN_QUEUE: limitReached = ${result['limitReached']}');
 
     if (result['success'] == true) {
       await _loadQueue();
@@ -152,7 +179,15 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           SnackBar(
             content: Text(result['error'] ?? 'Лимит выступлений исчерпан'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['error'] ?? 'Неизвестная ошибка'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -327,15 +362,19 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       await _engine.joinChannel(
         token: '',
         channelId: 'room_${widget.roomId}',
-        uid: 0,
-        options: const ChannelMediaOptions(),
+        uid: _userId ?? 0,
+        options: const ChannelMediaOptions(
+          autoSubscribeVideo: true,
+          autoSubscribeAudio: true,
+          publishCameraTrack: true,
+          publishMicrophoneTrack: true,
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+        ),
       );
     } catch (e) {
       setState(() => _statusMessage = "❌ Ошибка: $e");
     }
   }
-
-  // ===== ОТПРАВКА СООБЩЕНИЯ С МОДЕРАЦИЕЙ =====
 
   Future<void> _sendMessage() async {
     if (_chatController.text.trim().isEmpty || _userId == null) return;
@@ -386,6 +425,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     _performanceTimer?.cancel();
+    _chatPollTimer?.cancel();
     _engine.leaveChannel();
     _engine.release();
     _chatController.dispose();
@@ -862,27 +902,34 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Widget _buildLocalVideo() {
-    if (!_localUserJoined) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(color: Color(0xFFFFD700)),
-            const SizedBox(height: 10),
-            Text(_statusMessage,
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          ],
-        ),
-      );
-    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(15),
-      child: AgoraVideoView(
-        controller: VideoViewController(
-          rtcEngine: _engine,
-          canvas: const VideoCanvas(
-              uid: 0, sourceType: VideoSourceType.videoSourceCamera),
-        ),
+      child: Stack(
+        children: [
+          AgoraVideoView(
+            controller: VideoViewController(
+              rtcEngine: _engine,
+              canvas: const VideoCanvas(
+                  uid: 0, sourceType: VideoSourceType.videoSourceCamera),
+            ),
+          ),
+          if (!_localUserJoined)
+            Positioned(
+              top: 10,
+              left: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _statusMessage,
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

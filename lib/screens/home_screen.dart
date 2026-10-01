@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'live_room_screen.dart';
 import 'shorts_screen.dart';
 import 'seasons_screen.dart';
+import '../main.dart';
+import '../services/user_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+// ===== ВКЛАДКА "СЦЕНА" =====
 
 class StageTab extends StatelessWidget {
   const StageTab({super.key});
@@ -199,29 +203,187 @@ class StageTab extends StatelessWidget {
   }
 }
 
-class ProfileTab extends StatelessWidget {
+// ===== ВКЛАДКА "ПРОФИЛЬ" =====
+
+class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
 
   @override
+  State<ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<ProfileTab> {
+  int? _userId;
+  String? _userName;
+  String? _userEmail;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUser();
+  }
+
+  Future<void> _loadUser() async {
+    final id = await UserService.getUserId();
+    final name = await UserService.getUserName();
+    final email = await UserService.getUserEmail();
+    if (mounted) {
+      setState(() {
+        _userId = id;
+        _userName = name;
+        _userEmail = email;
+      });
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2A3A),
+        title: const Text('Выйти из аккаунта?',
+            style: TextStyle(color: Colors.white)),
+        content: const Text('Вы сможете войти снова.',
+            style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child:
+                const Text('Отмена', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child:
+                const Text('Выйти', style: TextStyle(color: Color(0xFFFFD700))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await UserService.logout();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+        (route) => false,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 20),
+            Center(
+              child: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFFFD700).withOpacity(0.15),
+                  border: Border.all(color: const Color(0xFFFFD700), width: 3),
+                ),
+                child: const Icon(Icons.person,
+                    size: 50, color: Color(0xFFFFD700)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: Text(
+                _userName ?? 'Загрузка...',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                _userEmail ?? '',
+                style: const TextStyle(fontSize: 14, color: Colors.white54),
+              ),
+            ),
+            const SizedBox(height: 40),
+            _buildInfoCard(
+              icon: Icons.confirmation_number,
+              label: 'ID пользователя',
+              value: _userId?.toString() ?? '—',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoCard(
+              icon: Icons.monetization_on,
+              label: 'Монеты',
+              value: '0',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoCard(
+              icon: Icons.star,
+              label: 'Premium',
+              value: 'Нет',
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              height: 55,
+              child: OutlinedButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout, color: Colors.red),
+                label: const Text(
+                  'ВЫЙТИ',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red, width: 2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoCard({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
         children: [
-          Icon(Icons.person, size: 80, color: Color(0xFFFFD700)),
-          SizedBox(height: 20),
-          Text(
-            'ПРОФИЛЬ',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFFFFD700),
+          Icon(icon, color: const Color(0xFFFFD700), size: 24),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
           ),
-          SizedBox(height: 10),
           Text(
-            'Здесь будет ваш профиль',
-            style: TextStyle(color: Colors.white70),
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),

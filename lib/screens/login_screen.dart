@@ -1,51 +1,41 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
+import 'registration_screen.dart';
 import '../services/api_service.dart';
 import '../services/user_service.dart';
 
-class RegistrationScreen extends StatefulWidget {
-  const RegistrationScreen({super.key});
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
 
   @override
-  State<RegistrationScreen> createState() => _RegistrationScreenState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _RegistrationScreenState extends State<RegistrationScreen> {
-  final TextEditingController _nameController = TextEditingController();
+class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
   bool _isLoading = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
-    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  Future<void> _register() async {
-    if (_nameController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _passwordController.text.isEmpty) {
+  Future<void> _login() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заполните все поля')),
-      );
-      return;
-    }
-
-    if (_passwordController.text.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Пароль должен быть минимум 6 символов')),
+        const SnackBar(content: Text('Заполните email и пароль')),
       );
       return;
     }
 
     setState(() => _isLoading = true);
 
-    final result = await ApiService.registerUser(
-      name: _nameController.text.trim(),
+    final result = await ApiService.login(
       email: _emailController.text.trim(),
       password: _passwordController.text,
     );
@@ -63,7 +53,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Регистрация успешна!')),
+          SnackBar(content: Text('Добро пожаловать, ${user['name']}!')),
         );
         Navigator.pushReplacement(
           context,
@@ -71,8 +61,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         );
       }
     } else {
-      final errorText =
-          result?['error'] ?? 'Ошибка регистрации. Проверьте сервер.';
+      final errorText = result?['error'] ?? 'Ошибка входа. Проверьте сервер.';
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -106,7 +95,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               children: [
                 const SizedBox(height: 40),
                 const Text(
-                  'СОЗДАТЬ АККАУНТ',
+                  'ВХОД',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 28,
@@ -117,28 +106,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Присоединяйся к шоу',
+                  'Рады видеть тебя снова',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16, color: Colors.white70),
                 ),
                 const SizedBox(height: 40),
-                TextField(
-                  controller: _nameController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'Ваше имя',
-                    labelStyle: const TextStyle(color: Colors.white70),
-                    prefixIcon:
-                        const Icon(Icons.person, color: Color(0xFFFFD700)),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.05),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
                 TextField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
@@ -159,15 +131,24 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 const SizedBox(height: 20),
                 TextField(
                   controller: _passwordController,
-                  obscureText: true,
+                  obscureText: _obscurePassword,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: 'Пароль',
                     labelStyle: const TextStyle(color: Colors.white70),
                     prefixIcon:
                         const Icon(Icons.lock, color: Color(0xFFFFD700)),
-                    helperText: 'Минимум 6 символов',
-                    helperStyle: const TextStyle(color: Colors.white38),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                        color: Colors.white54,
+                      ),
+                      onPressed: () {
+                        setState(() => _obscurePassword = !_obscurePassword);
+                      },
+                    ),
                     filled: true,
                     fillColor: Colors.white.withOpacity(0.05),
                     border: OutlineInputBorder(
@@ -180,7 +161,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 SizedBox(
                   height: 55,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _register,
+                    onPressed: _isLoading ? null : _login,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFFFD700),
                       foregroundColor: Colors.black,
@@ -198,51 +179,25 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                             ),
                           )
                         : const Text(
-                            'ЗАРЕГИСТРИРОВАТЬСЯ',
+                            'ВОЙТИ',
                             style: TextStyle(
                                 fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    const Expanded(child: Divider(color: Colors.white24)),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 10),
-                      child:
-                          Text('или', style: TextStyle(color: Colors.white54)),
-                    ),
-                    const Expanded(child: Divider(color: Colors.white24)),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.public, color: Colors.white),
-                  label: const Text('Войти через VK',
-                      style: TextStyle(color: Colors.white)),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    side: const BorderSide(color: Colors.white24),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Icon(Icons.g_mobiledata,
-                      color: Colors.white, size: 30),
-                  label: const Text('Войти через Google',
-                      style: TextStyle(color: Colors.white)),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    side: const BorderSide(color: Colors.white24),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const RegistrationScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Нет аккаунта? Зарегистрироваться',
+                    style: TextStyle(color: Color(0xFFFFD700), fontSize: 14),
                   ),
                 ),
                 const SizedBox(height: 30),

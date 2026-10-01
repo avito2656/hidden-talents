@@ -1,6 +1,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const bcrypt = require('bcrypt');
 require('dotenv').config();
 
 const app = express();
@@ -38,7 +39,7 @@ async function checkText(text) {
   const words = await pool.query('SELECT word FROM banned_words');
   const bannedList = words.rows.map(r => r.word.toLowerCase());
   const lowerText = text.toLowerCase();
-  
+
   for (const word of bannedList) {
     if (lowerText.includes(word)) {
       return { clean: false, word };
@@ -53,14 +54,103 @@ app.get('/', (req, res) => {
   res.json({ message: 'Сервер "Скрытые Таланты" работает!' });
 });
 
+// ===== РЕГИСТРАЦИЯ (с паролем) =====
+
 app.post('/api/users', async (req, res) => {
   try {
-    const { name, email } = req.body;
-    const result = await pool.query(
-      'INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *',
-      [name, email]
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Заполните имя, email и пароль',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Пароль должен быть минимум 6 символов',
+      });
+    }
+
+    const existing = await pool.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
     );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Этот email уже зарегистрирован',
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const result = await pool.query(
+      'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, name, email, coins_balance, is_premium, created_at',
+      [name, email, passwordHash]
+    );
+
     res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== ВХОД =====
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Введите email и пароль',
+      });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        error: 'Неверный email или пароль',
+      });
+    }
+
+    const user = result.rows[0];
+
+    if (!user.password_hash) {
+      return res.status(401).json({
+        success: false,
+        error: 'У этого аккаунта нет пароля. Зарегистрируйтесь заново.',
+      });
+    }
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        error: 'Неверный email или пароль',
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        coins_balance: user.coins_balance,
+        is_premium: user.is_premium,
+        created_at: user.created_at,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -68,7 +158,7 @@ app.post('/api/users', async (req, res) => {
 
 app.get('/api/users', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM users ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, name, email, coins_balance, is_premium, created_at FROM users ORDER BY created_at DESC');
     res.json({ success: true, users: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -91,7 +181,6 @@ app.post('/api/messages', async (req, res) => {
   try {
     const { room_id, user_id, text } = req.body;
 
-    // Проверяем на мат
     const check = await checkText(text);
     if (!check.clean) {
       return res.status(400).json({

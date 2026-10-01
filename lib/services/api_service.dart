@@ -2,21 +2,50 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:3000';
+  static const String baseUrl = 'http://37.139.51.232';
+
+  // ===== РЕГИСТРАЦИЯ (с паролем) =====
 
   static Future<Map<String, dynamic>?> registerUser({
     required String name,
     required String email,
+    required String password,
   }) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/users'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
-        body: jsonEncode({'name': name, 'email': email}),
+        body: jsonEncode({
+          'name': name,
+          'email': email,
+          'password': password,
+        }),
       );
       return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (e) {
       print('❌ Ошибка регистрации: $e');
+      return null;
+    }
+  }
+
+  // ===== ВХОД =====
+
+  static Future<Map<String, dynamic>?> login({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/login'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+        }),
+      );
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } catch (e) {
+      print('❌ Ошибка входа: $e');
       return null;
     }
   }
