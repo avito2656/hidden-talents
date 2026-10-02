@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const { RtcTokenBuilder, RtcRole } = require('agora-token');
 require('dotenv').config();
 
 const app = express();
@@ -48,10 +49,71 @@ async function checkText(text) {
   return { clean: true };
 }
 
+// ===== КОММЕНТАРИИ AI-СУДЕЙ =====
+
+const AI_COMMENTS_OPEN = [
+  'Отличное выступление! Открываю.',
+  'Мне понравилось! Голос чистый.',
+  'Хорошо спел(а)! Продолжай в том же духе.',
+  'Впечатлён(а)! Открываю видео.',
+  'Класс! Видно, что старался(ась).',
+];
+
+const AI_COMMENTS_CLOSE = [
+  'Не хватило эмоций. Закрываю.',
+  'Техника хромает. Не открываю.',
+  'Не моё. Закрываю.',
+  'Есть над чем поработать.',
+  'Пока не готов(а). Не открываю.',
+];
+
 // ===== API =====
 
 app.get('/', (req, res) => {
   res.json({ message: 'Сервер "Скрытые Таланты" работает!' });
+});
+
+// ===== AGORA TOKEN =====
+
+app.get('/api/agora/token', (req, res) => {
+  try {
+    const { channelName, uid } = req.query;
+
+    if (!channelName || uid === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Нужны параметры: channelName и uid',
+      });
+    }
+
+    const appId = process.env.AGORA_APP_ID;
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+
+    if (!appId || !appCertificate) {
+      return res.status(500).json({
+        success: false,
+        error: 'Agora credentials не настроены на сервере',
+      });
+    }
+
+    const expirationTimeInSeconds = 3600;
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      appId,
+      appCertificate,
+      channelName,
+      parseInt(uid),
+      RtcRole.PUBLISHER,
+      privilegeExpiredTs,
+      privilegeExpiredTs
+    );
+
+    res.json({ success: true, token });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ===== РЕГИСТРАЦИЯ (с паролем + 100 монет) =====
@@ -300,6 +362,96 @@ app.get('/api/donations/sent/:user_id', async (req, res) => {
   }
 });
 
+// ===== AI-СУДЬИ (АВТОГОЛОСОВАНИЕ) =====
+
+app.post('/api/judge/auto-vote', async (req, res) => {
+  try {
+    const { room_id, performer_user_id } = req.body;
+
+    if (!room_id || !performer_user_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Нужны room_id и performer_user_id',
+      });
+    }
+
+    const seats = await pool.query(
+      'SELECT * FROM judge_seats WHERE room_id = $1 ORDER BY seat_number',
+      [room_id]
+    );
+
+    if (seats.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'В комнате нет судей',
+      });
+    }
+
+    const votes = [];
+
+    for (const seat of seats.rows) {
+      const openChance = Math.random() < 0.6;
+      const comments = openChance ? AI_COMMENTS_OPEN : AI_COMMENTS_CLOSE;
+      const comment = comments[Math.floor(Math.random() * comments.length)];
+
+      const vote = await pool.query(
+        'INSERT INTO judge_votes (room_id, judge_user_id, performer_user_id, video_opened, comment) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [room_id, null, performer_user_id, openChance, comment]
+      );
+
+      votes.push({
+        judge_name: seat.ai_judge_name,
+        seat_number: seat.seat_number,
+        video_opened: openChance,
+        comment: comment,
+      });
+    }
+
+    const openedCount = votes.filter(v => v.video_opened).length;
+
+    let result;
+    if (openedCount === 0) {
+      result = 'Не расстраивайтесь! В следующий раз получится лучше 💪';
+    } else if (openedCount === 1) {
+      result = 'Поздравляю! К вам повернулся 1 судья 🎉';
+    } else if (openedCount === 2) {
+      result = 'Поздравляю! К вам повернулись 2 судьи 🎉';
+    } else {
+      result = 'Поздравляю! К вам повернулись все 3 судьи! 🔥';
+    }
+
+    res.json({
+      success: true,
+      votes: votes,
+      opened_count: openedCount,
+      total_judges: seats.rows.length,
+      result_text: result,
+      passed: openedCount >= 2,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== РЕЗУЛЬТАТЫ ГОЛОСОВАНИЯ =====
+
+app.get('/api/judge-results/:room_id/:performer_user_id', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT judge_votes.*, judge_seats.ai_judge_name 
+       FROM judge_votes 
+       LEFT JOIN judge_seats ON judge_votes.room_id = judge_seats.room_id 
+       WHERE judge_votes.room_id = $1 AND judge_votes.performer_user_id = $2 
+       ORDER BY judge_votes.created_at DESC 
+       LIMIT 10`,
+      [req.params.room_id, req.params.performer_user_id]
+    );
+    res.json({ success: true, votes: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ===== МОДЕРАЦИЯ =====
 
 app.post('/api/moderate/check', async (req, res) => {
@@ -353,7 +505,7 @@ app.get('/api/messages/:room_id', async (req, res) => {
   }
 });
 
-// ===== СУДЬИ =====
+// ===== СУДЬИ (РУЧНОЕ ГОЛОСОВАНИЕ) =====
 
 app.post('/api/judge_votes', async (req, res) => {
   try {

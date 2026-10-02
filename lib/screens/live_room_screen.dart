@@ -7,10 +7,23 @@ import '../services/user_service.dart';
 
 const appId = "30e1225ad640464f847561b9c1470b8b";
 
+// ===== РЕЖИМЫ КОМНАТЫ =====
+
+enum LiveRoomMode {
+  performer, // выступающий (камера включена)
+  viewer, // зритель (только смотрит)
+  judge, // судья (смотрит + голосует)
+}
+
 class LiveRoomScreen extends StatefulWidget {
   final int roomId;
+  final String mode;
 
-  const LiveRoomScreen({super.key, this.roomId = 1});
+  const LiveRoomScreen({
+    super.key,
+    this.roomId = 1,
+    this.mode = 'viewer',
+  });
 
   @override
   State<LiveRoomScreen> createState() => _LiveRoomScreenState();
@@ -18,9 +31,9 @@ class LiveRoomScreen extends StatefulWidget {
 
 class _LiveRoomScreenState extends State<LiveRoomScreen> {
   late final RtcEngine _engine;
+  bool _engineReady = false;
   int? _remoteUid;
   bool _localUserJoined = false;
-  bool _isBroadcaster = true;
   String _statusMessage = "Инициализация...";
   final TextEditingController _chatController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
@@ -29,6 +42,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   List<Map<String, dynamic>> _queue = [];
   Map<String, dynamic>? _currentPerformer;
   int? _userId;
+  int? _userCoins = 0;
   int get _roomId => widget.roomId;
 
   bool _isPerforming = false;
@@ -40,22 +54,41 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   int _countdownSeconds = 5;
   int _performanceSeconds = 90;
   String _endText = "";
+  List<Map<String, dynamic>> _aiVotes = [];
   Timer? _countdownTimer;
   Timer? _performanceTimer;
   Timer? _chatPollTimer;
 
+  LiveRoomMode get _mode {
+    switch (widget.mode) {
+      case 'performer':
+        return LiveRoomMode.performer;
+      case 'judge':
+        return LiveRoomMode.judge;
+      default:
+        return LiveRoomMode.viewer;
+    }
+  }
+
+  bool get _isBroadcaster => _mode == LiveRoomMode.performer;
+
   @override
   void initState() {
     super.initState();
-    _initAgora();
-    _loadUser();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadUser();
+    await _loadUserCoins();
+    await _initAgora();
+
     _loadMessages();
     _loadJudgeSeats();
     _loadQueue();
     _loadCurrentPerformer();
     _startQueueCheck();
 
-    // Автообновление чата каждые 3 секунды
     _chatPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) _loadMessages();
     });
@@ -69,6 +102,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _checkMyTurn() async {
+    if (!_isBroadcaster) return;
     if (_userId == null) return;
     if (_isPerforming || _showReadyQuestion || _readyAsked) return;
 
@@ -86,8 +120,16 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   Future<void> _loadUser() async {
     final id = await UserService.getUserId();
-    print('USER_ID_CHECK: $id');
-    setState(() => _userId = id);
+    debugPrint('🔑 USER ID: $id');
+    if (mounted) setState(() => _userId = id);
+  }
+
+  Future<void> _loadUserCoins() async {
+    if (_userId == null) return;
+    final user = await ApiService.getUser(_userId!);
+    if (user != null && mounted) {
+      setState(() => _userCoins = user['coins_balance'] ?? 0);
+    }
   }
 
   Future<void> _loadMessages() async {
@@ -95,13 +137,15 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     if (messages != null) {
       setState(() {
         _messages = messages
-            .map((m) => {
-                  'user': m['user_id'] == _userId
-                      ? 'Вы'
-                      : (m['user_name'] ?? 'User ${m['user_id']}'),
-                  'text': m['text'],
-                  'isMe': m['user_id'] == _userId,
-                })
+            .map(
+              (m) => {
+                'user': m['user_id'] == _userId
+                    ? 'Вы'
+                    : (m['user_name'] ?? 'User ${m['user_id']}'),
+                'text': m['text'],
+                'isMe': m['user_id'] == _userId,
+              },
+            )
             .toList();
       });
     }
@@ -133,45 +177,31 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _joinQueue() async {
-    print('JOIN_QUEUE: кнопка нажата, userId = $_userId');
     if (_userId == null) {
-      print('JOIN_QUEUE: userId == null, выход');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Вы не зарегистрированы'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Вы не зарегистрированы')));
       return;
     }
-
-    final result =
-        await ApiService.joinQueue(roomId: _roomId, userId: _userId!);
-    print('JOIN_QUEUE: ответ сервера = $result');
+    final result = await ApiService.joinQueue(
+      roomId: _roomId,
+      userId: _userId!,
+    );
 
     if (result == null) {
-      print('JOIN_QUEUE: result == null');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ошибка подключения к серверу'),
-            backgroundColor: Colors.red,
-          ),
+          const SnackBar(content: Text('Ошибка подключения к серверу')),
         );
       }
       return;
     }
 
-    print('JOIN_QUEUE: success = ${result['success']}');
-    print('JOIN_QUEUE: error = ${result['error']}');
-    print('JOIN_QUEUE: limitReached = ${result['limitReached']}');
-
     if (result['success'] == true) {
       await _loadQueue();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Вы в очереди!')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Вы в очереди!')));
       }
     } else if (result['limitReached'] == true) {
       if (mounted) {
@@ -186,7 +216,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['error'] ?? 'Неизвестная ошибка'),
+            content: Text(result['error'] ?? 'Не удалось встать в очередь'),
             backgroundColor: Colors.red,
           ),
         );
@@ -231,10 +261,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       _performanceSeconds = 90;
     });
 
-    await ApiService.startPerformance(
-      roomId: _roomId,
-      userId: _userId!,
-    );
+    await ApiService.startPerformance(roomId: _roomId, userId: _userId!);
     await _loadCurrentPerformer();
     await _loadQueue();
 
@@ -254,37 +281,42 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   Future<void> _endPerformance() async {
     _performanceTimer?.cancel();
+
+    setState(() => _isPerforming = false);
+
     await ApiService.endPerformance(_roomId);
 
-    final openedCount =
-        _judgeSeats.where((s) => s['occupied_by_user_id'] != null).length;
+    final result = await ApiService.autoVote(
+      roomId: _roomId,
+      performerUserId: _userId!,
+    );
 
-    String text;
-    if (openedCount == 0) {
-      text = "Не расстраивайтесь!\nВ следующий раз получится лучше 💪";
-    } else if (openedCount == 1) {
-      text = "Поздравляю!\nК вам повернулся 1 судья 🎉";
-    } else if (openedCount == 2) {
-      text = "Поздравляю!\nК вам повернулись 2 судьи 🎉";
+    if (result != null && result['success'] == true) {
+      final votes = (result['votes'] as List).cast<Map<String, dynamic>>();
+      final resultText = result['result_text'] ?? '';
+
+      setState(() {
+        _aiVotes = votes;
+        _endText = resultText;
+        _showEndText = true;
+        _performanceSeconds = 90;
+      });
     } else {
-      text = "Поздравляю!\nК вам повернулись все 3 судьи! 🔥";
+      setState(() {
+        _endText = 'Ошибка голосования';
+        _showEndText = true;
+      });
     }
-
-    setState(() {
-      _isPerforming = false;
-      _showEndText = true;
-      _endText = text;
-      _performanceSeconds = 90;
-    });
 
     await _loadCurrentPerformer();
     await _loadQueue();
+  }
 
-    await Future.delayed(const Duration(seconds: 4));
-    if (!mounted) return;
+  Future<void> _closeEndDialog() async {
     setState(() {
       _showEndText = false;
       _readyAsked = false;
+      _aiVotes = [];
     });
   }
 
@@ -298,10 +330,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     );
     if (result != null && result['success'] == true) {
       await _loadJudgeSeats();
+      await _loadUserCoins();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Вы заняли место судьи!')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Вы заняли место судьи!')));
       }
     } else {
       if (mounted) {
@@ -320,34 +353,61 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
       if (micStatus != PermissionStatus.granted ||
           camStatus != PermissionStatus.granted) {
-        setState(() => _statusMessage = "❌ Нет разрешений");
+        if (mounted) {
+          setState(
+            () => _statusMessage = "❌ Нет разрешений на камеру или микрофон",
+          );
+        }
         return;
       }
 
-      setState(() => _statusMessage = "Создание движка...");
+      if (mounted) setState(() => _statusMessage = "Создание движка...");
+
       _engine = createAgoraRtcEngine();
-      await _engine.initialize(const RtcEngineContext(appId: appId));
+
+      await _engine.initialize(
+        const RtcEngineContext(
+          appId: appId,
+          channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+        ),
+      );
+
+      _engineReady = true;
 
       _engine.registerEventHandler(
         RtcEngineEventHandler(
           onJoinChannelSuccess: (connection, elapsed) {
+            debugPrint(
+                '✅ AGORA вход в канал: ${connection.channelId}, uid: ${connection.localUid}');
+            if (!mounted) return;
             setState(() {
               _localUserJoined = true;
               _statusMessage = "В эфире";
             });
           },
           onUserJoined: (connection, remoteUid, elapsed) {
+            if (!mounted) return;
             setState(() => _remoteUid = remoteUid);
           },
           onUserOffline: (connection, remoteUid, reason) {
+            if (!mounted) return;
             setState(() => _remoteUid = null);
           },
           onError: (err, msg) {
-            setState(() => _statusMessage = "❌ Ошибка: $msg");
+            debugPrint('❌ AGORA ошибка: $err | $msg');
+            if (!mounted) return;
+            setState(() => _statusMessage = "❌ Ошибка Agora: $err $msg");
+          },
+          onConnectionStateChanged: (connection, state, reason) {
+            debugPrint('🔌 AGORA соединение: $state, причина: $reason');
           },
           onLocalVideoStateChanged: (source, state, reason) {
+            debugPrint('📷 AGORA камера: $state, причина: $reason');
+            if (!mounted) return;
             if (state == LocalVideoStreamState.localVideoStreamStateCapturing) {
-              setState(() => _statusMessage = "✅ Камера работает");
+              setState(
+                () => _statusMessage = "✅ Камера работает, подключаюсь...",
+              );
             } else if (state ==
                 LocalVideoStreamState.localVideoStreamStateFailed) {
               setState(() => _statusMessage = "❌ Ошибка камеры: $reason");
@@ -356,23 +416,71 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
         ),
       );
 
-      await _engine.enableVideo();
-      await _engine.startPreview();
-      await _engine.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
-      await _engine.joinChannel(
-        token: '',
-        channelId: 'room_${widget.roomId}',
-        uid: _userId ?? 0,
-        options: const ChannelMediaOptions(
-          autoSubscribeVideo: true,
-          autoSubscribeAudio: true,
-          publishCameraTrack: true,
-          publishMicrophoneTrack: true,
-          clientRoleType: ClientRoleType.clientRoleBroadcaster,
-        ),
+      if (_isBroadcaster) {
+        await _engine.setClientRole(
+          role: ClientRoleType.clientRoleBroadcaster,
+        );
+      } else {
+        await _engine.setClientRole(
+          role: ClientRoleType.clientRoleAudience,
+        );
+      }
+
+      if (_isBroadcaster) {
+        await _engine.enableVideo();
+        await _engine.startPreview();
+      }
+
+      final uid = _userId ?? 0;
+      final channelName = 'room_${widget.roomId}';
+
+      debugPrint('🚀 AGORA запрашиваю токен: channel=$channelName, uid=$uid');
+
+      final token = await ApiService.getAgoraToken(
+        channelName: channelName,
+        uid: uid,
       );
+
+      if (token == null) {
+        debugPrint('❌ AGORA токен не получен');
+        if (mounted) {
+          setState(() => _statusMessage = "❌ Не удалось получить Agora-токен");
+        }
+        return;
+      }
+
+      debugPrint('✅ AGORA токен получен');
+
+      final options = _isBroadcaster
+          ? const ChannelMediaOptions(
+              publishCameraTrack: true,
+              publishMicrophoneTrack: true,
+              autoSubscribeAudio: true,
+              autoSubscribeVideo: true,
+            )
+          : const ChannelMediaOptions(
+              publishCameraTrack: false,
+              publishMicrophoneTrack: false,
+              autoSubscribeAudio: true,
+              autoSubscribeVideo: true,
+            );
+
+      await _engine.joinChannel(
+        token: token,
+        channelId: channelName,
+        uid: uid,
+        options: options,
+      );
+
+      if (_isBroadcaster) {
+        await Future.delayed(const Duration(seconds: 2));
+        if (mounted) {
+          await _engine.startPreview();
+        }
+      }
     } catch (e) {
-      setState(() => _statusMessage = "❌ Ошибка: $e");
+      debugPrint('❌ AGORA исключение: $e');
+      if (mounted) setState(() => _statusMessage = "❌ Ошибка: $e");
     }
   }
 
@@ -390,9 +498,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
     if (result == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ошибка подключения')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Ошибка подключения')));
       }
       return;
     }
@@ -402,11 +509,13 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
         _messages.add({'user': 'Вы', 'text': text, 'isMe': true});
       });
       Future.delayed(const Duration(milliseconds: 100), () {
-        _chatScrollController.animateTo(
-          _chatScrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        if (_chatScrollController.hasClients) {
+          _chatScrollController.animateTo(
+            _chatScrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
       });
     } else if (result['blocked'] == true) {
       if (mounted) {
@@ -414,7 +523,6 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           const SnackBar(
             content: Text('Сообщение содержит запрещённые слова'),
             backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
           ),
         );
       }
@@ -426,8 +534,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     _countdownTimer?.cancel();
     _performanceTimer?.cancel();
     _chatPollTimer?.cancel();
-    _engine.leaveChannel();
-    _engine.release();
+    if (_engineReady) {
+      _engine.leaveChannel();
+      _engine.release();
+    }
     _chatController.dispose();
     _chatScrollController.dispose();
     super.dispose();
@@ -453,20 +563,37 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
-                          color: Colors.red,
+                          color: _mode == LiveRoomMode.performer
+                              ? Colors.red
+                              : Colors.blueGrey,
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Row(
+                        child: Row(
                           children: [
-                            Icon(Icons.circle, color: Colors.white, size: 8),
-                            SizedBox(width: 4),
-                            Text('LIVE',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11)),
+                            Icon(
+                              _mode == LiveRoomMode.performer
+                                  ? Icons.circle
+                                  : Icons.visibility,
+                              color: Colors.white,
+                              size: 8,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _mode == LiveRoomMode.performer
+                                  ? 'LIVE'
+                                  : (_mode == LiveRoomMode.judge
+                                      ? 'СУДЬЯ'
+                                      : 'СМОТРЮ'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -474,9 +601,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                         Text(
                           '⏱ $_performanceSeconds',
                           style: const TextStyle(
-                              color: Color(0xFFFFD700),
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold),
+                            color: Color(0xFFFFD700),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         )
                       else
                         const SizedBox(width: 40),
@@ -491,11 +619,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                       color: Colors.black,
                       borderRadius: BorderRadius.circular(15),
                     ),
-                    child: _currentPerformer != null
-                        ? _buildPerformerVideo()
-                        : (_isBroadcaster
-                            ? _buildLocalVideo()
-                            : _buildRemoteVideo()),
+                    child: _buildVideoArea(),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -519,17 +643,24 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('📋 ОЧЕРЕДЬ',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 10)),
+                        const Text(
+                          '📋 ОЧЕРЕДЬ',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
                         const SizedBox(height: 2),
                         Expanded(
                           child: _queue.isEmpty
-                              ? const Text('Пока пусто',
+                              ? const Text(
+                                  'Пока пусто',
                                   style: TextStyle(
-                                      color: Colors.white38, fontSize: 10))
+                                    color: Colors.white38,
+                                    fontSize: 10,
+                                  ),
+                                )
                               : ListView.builder(
                                   itemCount: _queue.length,
                                   itemBuilder: (context, index) {
@@ -554,7 +685,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                   },
                                 ),
                         ),
-                        if (_userId != null &&
+                        if (_isBroadcaster &&
+                            _userId != null &&
                             !_isPerforming &&
                             !_showReadyQuestion)
                           SizedBox(
@@ -567,12 +699,40 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                 foregroundColor: Colors.black,
                                 padding: EdgeInsets.zero,
                                 shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(15)),
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
                               ),
-                              child: const Text('ВСТАТЬ В ОЧЕРЕДЬ',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold)),
+                              child: const Text(
+                                'ВСТАТЬ В ОЧЕРЕДЬ',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_mode == LiveRoomMode.viewer)
+                          SizedBox(
+                            width: double.infinity,
+                            height: 32,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _occupySeat(1),
+                              icon: const Icon(Icons.gavel, size: 14),
+                              label: Text(
+                                'СТАТЬ СУДЬЁЙ (500) · У вас $_userCoins',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFFFD700),
+                                foregroundColor: Colors.black,
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                              ),
                             ),
                           ),
                       ],
@@ -594,14 +754,20 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                           padding: const EdgeInsets.all(6),
                           child: const Row(
                             children: [
-                              Icon(Icons.chat,
-                                  color: Color(0xFFFFD700), size: 12),
+                              Icon(
+                                Icons.chat,
+                                color: Color(0xFFFFD700),
+                                size: 12,
+                              ),
                               SizedBox(width: 4),
-                              Text('ЧАТ',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11)),
+                              Text(
+                                'ЧАТ',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -631,7 +797,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                       TextSpan(
                                         text: msg['text'],
                                         style: const TextStyle(
-                                            color: Colors.white, fontSize: 10),
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -648,15 +816,21 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                 child: TextField(
                                   controller: _chatController,
                                   style: const TextStyle(
-                                      color: Colors.white, fontSize: 11),
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
                                   decoration: InputDecoration(
                                     hintText: 'Написать...',
                                     hintStyle: const TextStyle(
-                                        color: Colors.white38, fontSize: 11),
+                                      color: Colors.white38,
+                                      fontSize: 11,
+                                    ),
                                     filled: true,
                                     fillColor: Colors.white.withOpacity(0.05),
                                     contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 6),
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(15),
                                       borderSide: BorderSide.none,
@@ -675,8 +849,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                     color: Color(0xFFFFD700),
                                     shape: BoxShape.circle,
                                   ),
-                                  child: const Icon(Icons.send,
-                                      color: Colors.black, size: 14),
+                                  child: const Icon(
+                                    Icons.send,
+                                    color: Colors.black,
+                                    size: 14,
+                                  ),
                                 ),
                               ),
                             ],
@@ -689,171 +866,375 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                 const SizedBox(height: 6),
               ],
             ),
-            if (_showReadyQuestion)
-              _buildOverlay(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: const Color(0xFFFFD700), width: 3),
-                        ),
-                        child: const Icon(Icons.mic,
-                            color: Color(0xFFFFD700), size: 50),
-                      ),
-                      const SizedBox(height: 25),
-                      const Text(
-                        'Ты готов?',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Твоё время пришло!',
-                        style: TextStyle(color: Colors.white70, fontSize: 16),
-                      ),
-                      const SizedBox(height: 40),
-                      SizedBox(
-                        width: 220,
-                        height: 65,
-                        child: ElevatedButton(
-                          onPressed: _onReadyYes,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF2ECC71),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(35)),
-                            elevation: 10,
-                            shadowColor: const Color(0xFF2ECC71),
-                          ),
-                          child: const Text('ДА!',
-                              style: TextStyle(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 2)),
-                        ),
-                      ),
-                    ],
+            if (_showReadyQuestion) _buildReadyOverlay(),
+            if (_showCountdown) _buildCountdownOverlay(),
+            if (_showInAir) _buildInAirOverlay(),
+            if (_showEndText) _buildEndOverlay(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===== ВИДЕО-ОБЛАСТЬ (ИСПРАВЛЕНО!) =====
+
+  Widget _buildVideoArea() {
+    // ПРИОРИТЕТ 1: если Я выступаю — показываю СВОЮ камеру
+    if (_isBroadcaster && _isPerforming) {
+      return _buildLocalVideo();
+    }
+
+    // ПРИОРИТЕТ 2: если кто-то ДРУГОЙ выступает — показываю его
+    if (_currentPerformer != null) {
+      final performerId = _currentPerformer!['user_id'];
+      if (performerId != _userId) {
+        return _buildRemoteVideo();
+      }
+    }
+
+    // Иначе — заглушка
+    return _buildWaitingPlaceholder();
+  }
+
+  Widget _buildWaitingPlaceholder() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            _isBroadcaster ? Icons.mic : Icons.visibility,
+            size: 60,
+            color: Colors.white24,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _isBroadcaster
+                ? 'Встаньте в очередь,\nчтобы выступить'
+                : 'Ожидание выступающего...',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocalVideo() {
+    if (!_localUserJoined) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: Color(0xFFFFD700)),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                _statusMessage,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(15),
+      child: AgoraVideoView(
+        controller: VideoViewController(
+          rtcEngine: _engine,
+          canvas: const VideoCanvas(
+            uid: 0,
+            sourceType: VideoSourceType.videoSourceCamera,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRemoteVideo() {
+    if (_remoteUid == null) {
+      return const Center(
+        child: Text(
+          'Ожидание видео...',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(15),
+      child: AgoraVideoView(
+        controller: VideoViewController.remote(
+          rtcEngine: _engine,
+          canvas: VideoCanvas(uid: _remoteUid),
+          connection: RtcConnection(channelId: 'room_${widget.roomId}'),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReadyOverlay() {
+    return _buildOverlay(
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFFFFD700),
+                  width: 3,
+                ),
+              ),
+              child: const Icon(
+                Icons.mic,
+                color: Color(0xFFFFD700),
+                size: 50,
+              ),
+            ),
+            const SizedBox(height: 25),
+            const Text(
+              'Ты готов?',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Твоё время пришло!',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: 220,
+              height: 65,
+              child: ElevatedButton(
+                onPressed: _onReadyYes,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2ECC71),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(35),
+                  ),
+                  elevation: 10,
+                  shadowColor: const Color(0xFF2ECC71),
+                ),
+                child: const Text(
+                  'ДА!',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2,
                   ),
                 ),
               ),
-            if (_showCountdown)
-              _buildOverlay(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'ПРИГОТОВЬСЯ',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 18,
-                          letterSpacing: 4,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        transitionBuilder: (child, animation) {
-                          return ScaleTransition(
-                              scale: animation, child: child);
-                        },
-                        child: Text(
-                          '$_countdownSeconds',
-                          key: ValueKey<int>(_countdownSeconds),
-                          style: const TextStyle(
-                            color: Color(0xFFFFD700),
-                            fontSize: 180,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountdownOverlay() {
+    return _buildOverlay(
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'ПРИГОТОВЬСЯ',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 18,
+                letterSpacing: 4,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 20),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (child, animation) {
+                return ScaleTransition(
+                  scale: animation,
+                  child: child,
+                );
+              },
+              child: Text(
+                '$_countdownSeconds',
+                key: ValueKey<int>(_countdownSeconds),
+                style: const TextStyle(
+                  color: Color(0xFFFFD700),
+                  fontSize: 180,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            if (_showInAir)
-              _buildOverlay(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(25),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFFFFD700),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFFFD700).withOpacity(0.5),
-                              blurRadius: 40,
-                              spreadRadius: 10,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.mic,
-                            color: Colors.black, size: 60),
-                      ),
-                      const SizedBox(height: 30),
-                      const Text(
-                        'ТЫ В ЭФИРЕ!',
-                        style: TextStyle(
-                          color: Color(0xFFFFD700),
-                          fontSize: 42,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInAirOverlay() {
+    return _buildOverlay(
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(25),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFFD700),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFFD700).withOpacity(0.5),
+                    blurRadius: 40,
+                    spreadRadius: 10,
                   ),
+                ],
+              ),
+              child: const Icon(
+                Icons.mic,
+                color: Colors.black,
+                size: 60,
+              ),
+            ),
+            const SizedBox(height: 30),
+            const Text(
+              'ТЫ В ЭФИРЕ!',
+              style: TextStyle(
+                color: Color(0xFFFFD700),
+                fontSize: 42,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEndOverlay() {
+    return _buildOverlay(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: SingleChildScrollView(
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFFFFD700),
+                  width: 2,
                 ),
               ),
-            if (_showEndText)
-              _buildOverlay(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(30.0),
-                    child: Container(
-                      padding: const EdgeInsets.all(25),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.emoji_events,
+                    color: Color(0xFFFFD700),
+                    size: 50,
+                  ),
+                  const SizedBox(height: 15),
+                  Text(
+                    _endText,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      height: 1.4,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ..._aiVotes.map((vote) {
+                    final opened = vote['video_opened'] == true;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(20),
+                        color: opened
+                            ? const Color(0xFF2ECC71).withOpacity(0.15)
+                            : Colors.red.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                            color: const Color(0xFFFFD700), width: 2),
+                          color: opened ? const Color(0xFF2ECC71) : Colors.red,
+                          width: 1,
+                        ),
                       ),
                       child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.emoji_events,
-                              color: Color(0xFFFFD700), size: 60),
-                          const SizedBox(height: 15),
+                          Row(
+                            children: [
+                              Icon(
+                                opened ? Icons.check_circle : Icons.cancel,
+                                color: opened
+                                    ? const Color(0xFF2ECC71)
+                                    : Colors.red,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                vote['judge_name'] ?? 'Судья',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
                           Text(
-                            _endText,
+                            vote['comment'] ?? '',
                             style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              height: 1.4,
+                              color: Colors.white70,
+                              fontSize: 12,
                             ),
-                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),
+                    );
+                  }).toList(),
+                  const SizedBox(height: 15),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 45,
+                    child: ElevatedButton(
+                      onPressed: _closeEndDialog,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD700),
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                      ),
+                      child: const Text(
+                        'ЗАКРЫТЬ',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -875,84 +1256,6 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     );
   }
 
-  Widget _buildPerformerVideo() {
-    return Stack(
-      children: [
-        _buildLocalVideo(),
-        Positioned(
-          top: 10,
-          left: 10,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '🎤 ${_currentPerformer?['user_name'] ?? 'Выступает'}',
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLocalVideo() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(15),
-      child: Stack(
-        children: [
-          AgoraVideoView(
-            controller: VideoViewController(
-              rtcEngine: _engine,
-              canvas: const VideoCanvas(
-                  uid: 0, sourceType: VideoSourceType.videoSourceCamera),
-            ),
-          ),
-          if (!_localUserJoined)
-            Positioned(
-              top: 10,
-              left: 10,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _statusMessage,
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRemoteVideo() {
-    if (_remoteUid == null) {
-      return const Center(
-        child: Text('Ожидание участника...',
-            style: TextStyle(color: Colors.white54)),
-      );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(15),
-      child: AgoraVideoView(
-        controller: VideoViewController.remote(
-          rtcEngine: _engine,
-          canvas: VideoCanvas(uid: _remoteUid),
-          connection: RtcConnection(channelId: 'room_${widget.roomId}'),
-        ),
-      ),
-    );
-  }
-
   Widget _buildJudge(int index) {
     final seatNumber = index + 1;
     final seat = _judgeSeats.firstWhere(
@@ -962,10 +1265,13 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     final occupiedBy = seat['occupied_by_user_id'];
     final isHuman = occupiedBy != null;
     final isMe = occupiedBy == _userId;
+    final aiName = seat['ai_judge_name'] ?? 'Судья $seatNumber';
 
     return GestureDetector(
       onTap: () {
-        if (!isHuman) _occupySeat(seatNumber);
+        if (_mode == LiveRoomMode.viewer && !isHuman) {
+          _occupySeat(seatNumber);
+        }
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 500),
@@ -991,8 +1297,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withOpacity(0.2),
-                border:
-                    Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 1,
+                ),
               ),
               child: const Icon(Icons.person, color: Colors.white, size: 14),
             ),
@@ -1000,13 +1308,12 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
-                isHuman
-                    ? (isMe ? 'Вы' : 'Кит')
-                    : (seat['ai_judge_name'] ?? 'Судья $seatNumber'),
+                isHuman ? (isMe ? 'Вы' : 'Гость') : aiName,
                 style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 7,
-                    fontWeight: FontWeight.bold),
+                  color: Colors.black,
+                  fontSize: 7,
+                  fontWeight: FontWeight.bold,
+                ),
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

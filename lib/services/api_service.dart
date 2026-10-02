@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiService {
   static const String baseUrl = 'http://37.139.51.232';
 
-  // ===== РЕГИСТРАЦИЯ (с паролем) =====
+  // ===== РЕГИСТРАЦИЯ =====
 
   static Future<Map<String, dynamic>?> registerUser({
     required String name,
@@ -38,10 +38,7 @@ class ApiService {
       final response = await http.post(
         Uri.parse('$baseUrl/api/login'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-        }),
+        body: jsonEncode({'email': email, 'password': password}),
       );
       return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (e) {
@@ -50,13 +47,11 @@ class ApiService {
     }
   }
 
-  // ===== ПОЛУЧИТЬ ПОЛЬЗОВАТЕЛЯ ПО ID =====
+  // ===== ПОЛЬЗОВАТЕЛЬ =====
 
   static Future<Map<String, dynamic>?> getUser(int userId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/users/$userId'),
-      );
+      final response = await http.get(Uri.parse('$baseUrl/api/users/$userId'));
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         return data['user'];
@@ -90,6 +85,51 @@ class ApiService {
       return jsonDecode(utf8.decode(response.bodyBytes));
     } catch (e) {
       print('❌ Ошибка доната: $e');
+      return null;
+    }
+  }
+
+  // ===== AI-СУДЬИ =====
+
+  static Future<Map<String, dynamic>?> autoVote({
+    required int roomId,
+    required int performerUserId,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/judge/auto-vote'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({
+          'room_id': roomId,
+          'performer_user_id': performerUserId,
+        }),
+      );
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } catch (e) {
+      print('❌ Ошибка AI-голосования: $e');
+      return null;
+    }
+  }
+
+  // ===== AGORA TOKEN =====
+
+  static Future<String?> getAgoraToken({
+    required String channelName,
+    required int uid,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/agora/token?channelName=$channelName&uid=$uid'),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        if (data['success'] == true) {
+          return data['token'];
+        }
+      }
+      return null;
+    } catch (e) {
+      print('❌ Ошибка получения Agora-токена: $e');
       return null;
     }
   }

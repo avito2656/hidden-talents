@@ -74,6 +74,8 @@ class StageTab extends StatelessWidget {
               style: TextStyle(fontSize: 14, color: Colors.white70),
             ),
             const SizedBox(height: 30),
+
+            // ===== КНОПКА "ВЫСТУПИТЬ" =====
             SizedBox(
               width: double.infinity,
               height: 60,
@@ -82,13 +84,16 @@ class StageTab extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const LiveRoomScreen(roomId: 1),
+                      builder: (context) => const LiveRoomScreen(
+                        roomId: 1,
+                        mode: 'performer',
+                      ),
                     ),
                   );
                 },
                 icon: const Icon(Icons.mic, size: 28),
                 label: const Text(
-                  'ВЫЙТИ НА СЦЕНУ',
+                  'ВЫСТУПИТЬ',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 style: ElevatedButton.styleFrom(
@@ -102,6 +107,47 @@ class StageTab extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 15),
+
+            // ===== КНОПКА "СМОТРЕТЬ ЭФИР" =====
+            SizedBox(
+              width: double.infinity,
+              height: 60,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const LiveRoomScreen(
+                        roomId: 1,
+                        mode: 'viewer',
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(
+                  Icons.visibility,
+                  color: Color(0xFFFFD700),
+                  size: 26,
+                ),
+                label: const Text(
+                  'СМОТРЕТЬ ЭФИР',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFFFD700),
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFFFD700), width: 2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+
+            // ===== КНОПКА "СЕЗОНЫ" =====
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -113,21 +159,23 @@ class StageTab extends StatelessWidget {
                         builder: (context) => const SeasonsScreen()),
                   );
                 },
-                icon: const Icon(Icons.emoji_events, color: Color(0xFFFFD700)),
+                icon: const Icon(Icons.emoji_events, color: Colors.white70),
                 label: const Text(
                   'СЕЗОНЫ',
                   style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFFFFD700)),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white70,
+                  ),
                 ),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFFFD700)),
+                  side: const BorderSide(color: Colors.white24),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(30)),
                 ),
               ),
             ),
+
             const SizedBox(height: 30),
             const Text(
               'СЕЙЧАС В ЭФИРЕ',
@@ -163,7 +211,7 @@ class StageTab extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Анна, 22 года',
+                          'Эфир скоро начнётся',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -172,7 +220,7 @@ class StageTab extends StatelessWidget {
                         ),
                         SizedBox(height: 5),
                         Text(
-                          '🎵 Someone Like You',
+                          'Сегодня в 20:00',
                           style: TextStyle(fontSize: 14, color: Colors.white70),
                         ),
                       ],
@@ -182,11 +230,11 @@ class StageTab extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: Colors.red,
+                      color: Colors.orange,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Text(
-                      'LIVE',
+                      'СКОРО',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
