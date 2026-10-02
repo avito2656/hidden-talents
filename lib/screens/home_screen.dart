@@ -3,6 +3,7 @@ import 'live_room_screen.dart';
 import 'shorts_screen.dart';
 import 'seasons_screen.dart';
 import '../main.dart';
+import '../services/api_service.dart';
 import '../services/user_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,10 +22,10 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: const Color(0xFF0A1929),
       body: IndexedStack(
         index: _currentIndex,
-        children: const [
-          StageTab(),
-          ShortsScreen(),
-          ProfileTab(),
+        children: [
+          const StageTab(),
+          ShortsScreen(isTabActive: _currentIndex == 1),
+          const ProfileTab(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -216,6 +217,9 @@ class _ProfileTabState extends State<ProfileTab> {
   int? _userId;
   String? _userName;
   String? _userEmail;
+  int _coinsBalance = 0;
+  bool _isPremium = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -227,11 +231,26 @@ class _ProfileTabState extends State<ProfileTab> {
     final id = await UserService.getUserId();
     final name = await UserService.getUserName();
     final email = await UserService.getUserEmail();
+
+    int coins = 0;
+    bool premium = false;
+
+    if (id != null) {
+      final user = await ApiService.getUser(id);
+      if (user != null) {
+        coins = user['coins_balance'] ?? 0;
+        premium = user['is_premium'] ?? false;
+      }
+    }
+
     if (mounted) {
       setState(() {
         _userId = id;
         _userName = name;
         _userEmail = email;
+        _coinsBalance = coins;
+        _isPremium = premium;
+        _isLoading = false;
       });
     }
   }
@@ -273,86 +292,99 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 20),
-            Center(
-              child: Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFFFFD700).withOpacity(0.15),
-                  border: Border.all(color: const Color(0xFFFFD700), width: 3),
+      child: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFFFFD700)))
+          : RefreshIndicator(
+              onRefresh: _loadUser,
+              color: const Color(0xFFFFD700),
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 20),
+                    Center(
+                      child: Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFFFD700).withOpacity(0.15),
+                          border: Border.all(
+                              color: const Color(0xFFFFD700), width: 3),
+                        ),
+                        child: const Icon(Icons.person,
+                            size: 50, color: Color(0xFFFFD700)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Center(
+                      child: Text(
+                        _userName ?? 'Загрузка...',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        _userEmail ?? '',
+                        style: const TextStyle(
+                            fontSize: 14, color: Colors.white54),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    _buildInfoCard(
+                      icon: Icons.confirmation_number,
+                      label: 'ID пользователя',
+                      value: _userId?.toString() ?? '—',
+                    ),
+                    const SizedBox(height: 12),
+                    _buildInfoCard(
+                      icon: Icons.monetization_on,
+                      label: 'Монеты',
+                      value: '$_coinsBalance',
+                      valueColor: const Color(0xFFFFD700),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildInfoCard(
+                      icon: Icons.star,
+                      label: 'Premium',
+                      value: _isPremium ? 'Да' : 'Нет',
+                      valueColor:
+                          _isPremium ? const Color(0xFFFFD700) : Colors.white70,
+                    ),
+                    const SizedBox(height: 40),
+                    SizedBox(
+                      height: 55,
+                      child: OutlinedButton.icon(
+                        onPressed: _logout,
+                        icon: const Icon(Icons.logout, color: Colors.red),
+                        label: const Text(
+                          'ВЫЙТИ',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.red, width: 2),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                child: const Icon(Icons.person,
-                    size: 50, color: Color(0xFFFFD700)),
               ),
             ),
-            const SizedBox(height: 20),
-            Center(
-              child: Text(
-                _userName ?? 'Загрузка...',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Center(
-              child: Text(
-                _userEmail ?? '',
-                style: const TextStyle(fontSize: 14, color: Colors.white54),
-              ),
-            ),
-            const SizedBox(height: 40),
-            _buildInfoCard(
-              icon: Icons.confirmation_number,
-              label: 'ID пользователя',
-              value: _userId?.toString() ?? '—',
-            ),
-            const SizedBox(height: 12),
-            _buildInfoCard(
-              icon: Icons.monetization_on,
-              label: 'Монеты',
-              value: '0',
-            ),
-            const SizedBox(height: 12),
-            _buildInfoCard(
-              icon: Icons.star,
-              label: 'Premium',
-              value: 'Нет',
-            ),
-            const SizedBox(height: 40),
-            SizedBox(
-              height: 55,
-              child: OutlinedButton.icon(
-                onPressed: _logout,
-                icon: const Icon(Icons.logout, color: Colors.red),
-                label: const Text(
-                  'ВЫЙТИ',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.red, width: 2),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -360,6 +392,7 @@ class _ProfileTabState extends State<ProfileTab> {
     required IconData icon,
     required String label,
     required String value,
+    Color valueColor = Colors.white,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -379,8 +412,8 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: valueColor,
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),

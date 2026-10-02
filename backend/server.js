@@ -54,7 +54,7 @@ app.get('/', (req, res) => {
   res.json({ message: 'Сервер "Скрытые Таланты" работает!' });
 });
 
-// ===== РЕГИСТРАЦИЯ (с паролем) =====
+// ===== РЕГИСТРАЦИЯ (с паролем + 100 монет) =====
 
 app.post('/api/users', async (req, res) => {
   try {
@@ -88,8 +88,8 @@ app.post('/api/users', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, name, email, coins_balance, is_premium, created_at',
-      [name, email, passwordHash]
+      'INSERT INTO users (name, email, password_hash, coins_balance) VALUES ($1, $2, $3, $4) RETURNING id, name, email, coins_balance, is_premium, created_at',
+      [name, email, passwordHash, 100]
     );
 
     res.json({ success: true, user: result.rows[0] });
@@ -165,7 +165,143 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Проверка текста на мат
+// ===== ПОЛЬЗОВАТЕЛЬ ПО ID =====
+
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, email, coins_balance, is_premium, created_at FROM users WHERE id = $1',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+    }
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== ДОНАТЫ =====
+
+app.post('/api/donate', async (req, res) => {
+  try {
+    const { sender_user_id, recipient_user_id, amount, short_id } = req.body;
+
+    if (!sender_user_id || !recipient_user_id || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Заполните все поля: sender_user_id, recipient_user_id, amount',
+      });
+    }
+
+    if (amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Сумма доната должна быть больше 0',
+      });
+    }
+
+    if (sender_user_id === recipient_user_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Нельзя донатить самому себе',
+      });
+    }
+
+    const recipient = await pool.query(
+      'SELECT id, name FROM users WHERE id = $1',
+      [recipient_user_id]
+    );
+    if (recipient.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Получатель не найден',
+      });
+    }
+
+    const sender = await pool.query(
+      'SELECT coins_balance FROM users WHERE id = $1',
+      [sender_user_id]
+    );
+    if (sender.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Отправитель не найден',
+      });
+    }
+
+    const senderBalance = sender.rows[0].coins_balance;
+    if (senderBalance < amount) {
+      return res.status(400).json({
+        success: false,
+        error: `Недостаточно монет. У вас ${senderBalance}, нужно ${amount}`,
+      });
+    }
+
+    await pool.query(
+      'UPDATE users SET coins_balance = coins_balance - $1 WHERE id = $2',
+      [amount, sender_user_id]
+    );
+
+    await pool.query(
+      'UPDATE users SET coins_balance = coins_balance + $1 WHERE id = $2',
+      [amount, recipient_user_id]
+    );
+
+    const result = await pool.query(
+      'INSERT INTO donations (sender_user_id, recipient_user_id, amount, short_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [sender_user_id, recipient_user_id, amount, short_id || null]
+    );
+
+    res.json({
+      success: true,
+      donation: result.rows[0],
+      recipient_name: recipient.rows[0].name,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== ИСТОРИЯ ДОНАТОВ =====
+
+app.get('/api/donations/received/:user_id', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT donations.*, users.name as sender_name 
+       FROM donations 
+       JOIN users ON donations.sender_user_id = users.id 
+       WHERE donations.recipient_user_id = $1 
+       ORDER BY donations.created_at DESC 
+       LIMIT 50`,
+      [req.params.user_id]
+    );
+    res.json({ success: true, donations: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/donations/sent/:user_id', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT donations.*, users.name as recipient_name 
+       FROM donations 
+       JOIN users ON donations.recipient_user_id = users.id 
+       WHERE donations.sender_user_id = $1 
+       ORDER BY donations.created_at DESC 
+       LIMIT 50`,
+      [req.params.user_id]
+    );
+    res.json({ success: true, donations: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===== МОДЕРАЦИЯ =====
+
 app.post('/api/moderate/check', async (req, res) => {
   try {
     const { text } = req.body;
@@ -176,7 +312,8 @@ app.post('/api/moderate/check', async (req, res) => {
   }
 });
 
-// Отправить сообщение (с проверкой)
+// ===== СООБЩЕНИЯ =====
+
 app.post('/api/messages', async (req, res) => {
   try {
     const { room_id, user_id, text } = req.body;
@@ -215,6 +352,8 @@ app.get('/api/messages/:room_id', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ===== СУДЬИ =====
 
 app.post('/api/judge_votes', async (req, res) => {
   try {

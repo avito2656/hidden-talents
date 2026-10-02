@@ -50,6 +50,50 @@ class ApiService {
     }
   }
 
+  // ===== ПОЛУЧИТЬ ПОЛЬЗОВАТЕЛЯ ПО ID =====
+
+  static Future<Map<String, dynamic>?> getUser(int userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/users/$userId'),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        return data['user'];
+      }
+      return null;
+    } catch (e) {
+      print('❌ Ошибка получения пользователя: $e');
+      return null;
+    }
+  }
+
+  // ===== ДОНАТЫ =====
+
+  static Future<Map<String, dynamic>?> donate({
+    required int senderUserId,
+    required int recipientUserId,
+    required int amount,
+    int? shortId,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/donate'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({
+          'sender_user_id': senderUserId,
+          'recipient_user_id': recipientUserId,
+          'amount': amount,
+          if (shortId != null) 'short_id': shortId,
+        }),
+      );
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } catch (e) {
+      print('❌ Ошибка доната: $e');
+      return null;
+    }
+  }
+
   static Future<List<dynamic>?> getUsers() async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/api/users'));
